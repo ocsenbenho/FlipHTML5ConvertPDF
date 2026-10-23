@@ -64,6 +64,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+/* ────────────── Quản lý Nhật ký & Sự kiện ────────────── */
+const recentLogs = [];
+
+function logToPopup(source, text, level = 'info', hint = '') {
+  const entry = {
+    source, // 'system' | 'tab' | 'shot' | 'offscreen' | 'pdf' | 'download'
+    text,
+    level, // 'info' | 'warn' | 'error' | 'success'
+    hint,
+    time: new Date().toLocaleTimeString('vi-VN', { hour12: false })
+  };
+  recentLogs.push(entry);
+  if (recentLogs.length > 200) recentLogs.shift();
+  broadcast({ type: 'LOG_MESSAGE', ...entry });
+  console.log(`[Flipbook-DL][${source.toUpperCase()}] ${text}${hint ? ' | Cần xử lý: ' + hint : ''}`);
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
 /* ────────────── Chế độ chụp màn hình ────────────── */
 let shotRunning = false;
 let shotCancelled = false;
@@ -191,7 +215,7 @@ async function waitForPageContentReady(tabId, targetPage, timeoutMs = 8000) {
           // A. Sách có đang trong hoạt cảnh lật trang 3D không?
           try {
             const book = window.BookInfo?.getBook?.() || window.flipBook || window.singlePageBook;
-            if (book && book.flipping) return false;
+            if (book && book.flipping) return { ok: false, stage: 'flipping_3d' };
           } catch {}
 
           // B. Kiểm tra FlipHTML5 đã chuyển tới trang này chưa
@@ -199,9 +223,8 @@ async function waitForPageContentReady(tabId, targetPage, timeoutMs = 8000) {
             if (typeof window.BookInfo?.getCurrentPages === 'function') {
               const cur = window.BookInfo.getCurrentPages().map(Number);
               if (cur.length > 0) {
-                // Trang mục tiêu p phải nằm trong trang hiển thị, hoặc cách không quá 1 trang
                 const match = cur.includes(p) || cur.some((cp) => Math.abs(cp - p) <= 1);
-                if (!match) return false;
+                if (!match) return { ok: false, stage: 'page_index_sync' };
               }
             }
           } catch {}
@@ -215,7 +238,7 @@ async function waitForPageContentReady(tabId, targetPage, timeoutMs = 8000) {
             if (cs.display !== 'none' && cs.visibility !== 'hidden' && parseFloat(cs.opacity) > 0) {
               const r = sp.getBoundingClientRect();
               if (r.width > 20 && r.height > 20 && r.top < window.innerHeight && r.bottom > 0) {
-                return false; // vẫn đang hiện icon loading
+                return { ok: false, stage: 'spinner_visible' };
               }
             }
           }
@@ -227,7 +250,7 @@ async function waitForPageContentReady(tabId, targetPage, timeoutMs = 8000) {
             return r.width > 120 && r.height > 120;
           });
           for (const img of imgs) {
-            if (!img.complete || img.naturalWidth === 0) return false;
+            if (!img.complete || img.naturalWidth === 0) return { ok: false, stage: 'img_loading' };
           }
 
           // E. Kiểm tra các thẻ canvas hiển thị nội dung trang sách
@@ -237,10 +260,9 @@ async function waitForPageContentReady(tabId, targetPage, timeoutMs = 8000) {
           });
 
           if (canvases.length === 0 && imgs.length === 0) {
-            return false; // chưa có canvas lẫn img
+            return { ok: false, stage: 'no_media_yet' };
           }
 
-          // Kiểm tra xem canvas đã có kích thước thực tế và dữ liệu vẽ chưa
           let validCanvas = false;
           for (const cv of canvases) {
             if (cv.width >= 100 && cv.height >= 100) {
@@ -254,19 +276,21 @@ async function waitForPageContentReady(tabId, targetPage, timeoutMs = 8000) {
                   }
                 }
               } catch {
-                validCanvas = true; // tainted context (cross-origin image) coi như đã vẽ
+                validCanvas = true;
                 break;
               }
             }
           }
 
-          return validCanvas || imgs.length > 0;
+          if (validCanvas || imgs.length > 0) {
+            return { ok: true };
+          }
+          return { ok: false, stage: 'canvas_empty' };
         }
 
-        // Chờ đến khi checkLoaded trả về true
         while (Date.now() - start < timeout) {
-          if (checkLoaded()) {
-            // Chờ thêm 350ms để text sharpen và khử răng cưa canvas hoàn tất
+          const chk = checkLoaded();
+          if (chk.ok) {
             await new Promise((r) => setTimeout(r, 350));
             return { ready: true, time: Date.now() - start };
           }
@@ -277,8 +301,15 @@ async function waitForPageContentReady(tabId, targetPage, timeoutMs = 8000) {
       }
     });
 
-    return res?.[0]?.result || { ready: false };
+    const status = res?.[0]?.result || { ready: false };
+    if (status.ready) {
+      logToPopup('tab', `Trang #${targetPage} đã sẵn sàng (${status.time}ms: dừng lật 3D, canvas/ảnh đã vẽ pixel).`);
+    } else if (status.timeout) {
+      logToPopup('tab', `Trang #${targetPage} tải chậm (sau ${status.time || timeoutMs}ms chưa xong hoạt cảnh/canvas). Vẫn tiến hành chụp...`, 'warn', 'Nếu trang bị mờ hoặc trắng hình, hãy tăng "Tốc độ lật" lên 1200ms - 1500ms trong mục "⚙ Tùy chọn".');
+    }
+    return status;
   } catch (e) {
+    logToPopup('tab', `Không thể kiểm tra trạng thái trang #${targetPage}: ${e.message}`, 'warn', 'Kiểm tra quyền truy cập tab hoặc reload lại sách.');
     return { ready: false, error: e.message };
   }
 }
@@ -286,7 +317,7 @@ async function waitForPageContentReady(tabId, targetPage, timeoutMs = 8000) {
 async function runScreenshotJob(tab, options) {
   shotRunning = true;
   shotCancelled = false;
-  const delay = Math.max(600, options.flipDelay || 800); // thời gian chờ render trang
+  const delay = Math.max(600, options.flipDelay || 800);
   const quality = Math.round(Math.min(1, Math.max(0.5, options.quality || 0.95)) * 100);
   const pageFrom = Math.max(1, options.pageFrom || 1);
   const pageTo = Number.isFinite(options.pageTo) ? options.pageTo : Infinity;
@@ -298,10 +329,13 @@ async function runScreenshotJob(tab, options) {
     });
 
   try {
+    logToPopup('system', options.isTest ? '🧪 Bắt đầu tác vụ: CHỤP THỬ 20 TRANG ĐẦU' : '📸 Bắt đầu tác vụ: CHỤP TOÀN BỘ SÁCH VÀ GHÉP PDF');
+    logToPopup('offscreen', 'Đang kích hoạt môi trường Offscreen Document để xử lý ảnh & ghép PDF...');
     await ensureOffscreen();
     await chrome.runtime.sendMessage({ type: 'OFFSCREEN_SHOT_RESET' });
 
     // 1. Lấy thông tin sách từ main world
+    logToPopup('tab', `Đang đọc cấu hình sách từ tab #${tab.id} ("${tab.title || ''}")...`);
     const metaRes = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: 'MAIN',
@@ -333,9 +367,9 @@ async function runScreenshotJob(tab, options) {
     const isDouble = meta.isDouble !== false;
     const endPage = Math.min(totalPages, pageTo);
 
-    // 2. Tạo danh sách các trang cần chụp:
-    // Trang bìa là #p=1
-    // Các trang sau là hai trang mở rộng (spread): #p=2 (trang 2-3), #p=4 (trang 4-5), #p=6 (trang 6-7)...
+    logToPopup('tab', `Phát hiện: Tổng ${totalPages} trang, chế độ ${isDouble ? 'hai trang (spread #p=[n+2])' : 'trang đơn'}, tiêu đề: "${meta.title || tab.title}".`);
+
+    // 2. Tạo danh sách các trang cần chụp
     const pagesToCapture = [];
     if (isDouble) {
       if (pageFrom <= 1) pagesToCapture.push(1);
@@ -343,7 +377,6 @@ async function runScreenshotJob(tab, options) {
       for (let p = startEven; p <= endPage; p += 2) {
         pagesToCapture.push(p);
       }
-      // Nếu trang cuối là số lẻ (ví dụ 401 là bìa sau) và chưa có trong danh sách
       if (endPage % 2 !== 0 && endPage > 1 && !pagesToCapture.includes(endPage)) {
         pagesToCapture.push(endPage);
       }
@@ -355,6 +388,8 @@ async function runScreenshotJob(tab, options) {
 
     const totalSteps = pagesToCapture.length;
     const rangeText = (pageFrom > 1 || endPage < totalPages) ? `, trang ${pageFrom} → ${endPage}` : '';
+    
+    logToPopup('shot', `Lên lịch chụp ${totalSteps} khung hình (chất lượng nén ${quality}%, tốc độ chờ ${delay}ms${rangeText}).`);
     broadcast({
       type: 'SHOT_PROGRESS_TEXT',
       text: options.isTest
@@ -365,12 +400,16 @@ async function runScreenshotJob(tab, options) {
     let kept = 0;
 
     for (let i = 0; i < pagesToCapture.length; i++) {
-      if (shotCancelled) break;
+      if (shotCancelled) {
+        logToPopup('system', 'Người dùng đã bấm hủy tiến trình.', 'warn');
+        break;
+      }
 
       const targetPage = pagesToCapture[i];
       const stepIndex = i + 1;
 
       // Chuyển trang trực tiếp trong Main World
+      logToPopup('tab', `[Bước ${stepIndex}/${totalSteps}] Đang chuyển tới trang #${targetPage}...`);
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         world: 'MAIN',
@@ -398,22 +437,39 @@ async function runScreenshotJob(tab, options) {
       await waitForPageContentReady(tab.id, targetPage, Math.max(8000, delay * 8));
 
       const current = await chrome.tabs.get(tab.id);
-      if (!current.active) throw new Error('Tab bị chuyển đi. Vui lòng giữ tab flipbook ở phía trước khi chụp.');
+      if (!current.active) {
+        logToPopup('tab', 'Tab flipbook bị mất active (người dùng chuyển sang tab khác).', 'error', 'Giữ tab chứa flipbook ở phía trước (active tab) trong suốt quá trình chụp, không chuyển tab.');
+        throw new Error('Tab bị chuyển đi. Vui lòng giữ tab flipbook ở phía trước khi chụp.');
+      }
 
       // Lấy khung cuốn sách
       const crop = await getBookRect(tab.id);
 
       if (stepIndex === 1) {
-        broadcast({
-          type: 'SHOT_PROGRESS_TEXT',
-          text: crop
-            ? `✂ Tự động cắt theo khung sách: ${Math.round(crop.w)}×${Math.round(crop.h)}px (loại bỏ thanh công cụ và khoảng đen)`
-            : '⚠ Không xác định được khung sách, chụp toàn bộ màn hình.'
-        });
+        if (crop) {
+          logToPopup('shot', `Tự động nhận diện khung sách: ${Math.round(crop.w)}×${Math.round(crop.h)}px tại toạ độ (${crop.x}, ${crop.y}) trên màn hình ${crop.vw}×${crop.vh}px (sẽ cắt viền ngoài).`);
+          broadcast({
+            type: 'SHOT_PROGRESS_TEXT',
+            text: `✂ Tự động cắt theo khung sách: ${Math.round(crop.w)}×${Math.round(crop.h)}px (loại bỏ thanh công cụ và khoảng đen)`
+          });
+        } else {
+          logToPopup('shot', 'Không nhận diện được khung sách riêng biệt. Chụp toàn bộ màn hình tab.', 'warn', 'Để chụp khít viền sách, hãy phóng to cửa sổ hoặc reset zoom về 100% (Cmd/Ctrl + 0).');
+          broadcast({
+            type: 'SHOT_PROGRESS_TEXT',
+            text: '⚠ Không xác định được khung sách, chụp toàn bộ màn hình.'
+          });
+        }
       }
 
       // Chụp màn hình tab hiển thị (PNG sắc nét)
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      let dataUrl;
+      try {
+        dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+        logToPopup('shot', `[Bước ${stepIndex}/${totalSteps}] Đã chụp màn hình trang #${targetPage} (PNG lossless).`);
+      } catch (capErr) {
+        logToPopup('shot', `Lỗi chụp màn hình trang #${targetPage}: ${capErr.message}`, 'error', 'Đảm bảo cửa sổ Chrome không bị thu nhỏ cực tiểu (minimize) và tab đang hiển thị đầy đủ.');
+        throw capErr;
+      }
 
       // Gửi sang offscreen để cắt theo khung sách và lưu trữ
       const resp = await chrome.runtime.sendMessage({
@@ -422,7 +478,12 @@ async function runScreenshotJob(tab, options) {
         crop,
         quality: quality / 100
       });
-      if (resp?.error) throw new Error(`Lỗi cắt ảnh trang ${targetPage}: ${resp.error}`);
+      if (resp?.error) {
+        logToPopup('offscreen', `Lỗi cắt/nén ảnh trang #${targetPage}: ${resp.error}`, 'error', 'OffscreenCanvas gặp sự cố bộ nhớ. Thử đóng bớt tab hoặc hạ chất lượng JPG.');
+        throw new Error(`Lỗi cắt ảnh trang ${targetPage}: ${resp.error}`);
+      }
+
+      logToPopup('offscreen', `[Bước ${stepIndex}/${totalSteps}] Đã cắt theo khung sách và mã hóa JPEG chất lượng ${quality}% (khung hình ${resp.count}).`);
 
       kept++;
       const testPrefix = options.isTest ? '🧪 [Thử nghiệm] ' : '';
@@ -430,31 +491,47 @@ async function runScreenshotJob(tab, options) {
     }
 
     if (shotCancelled) {
+      logToPopup('system', 'Tiến trình chụp đã dừng theo yêu cầu của bạn.', 'warn');
       broadcast({ type: 'SHOT_DONE', result: { error: 'Đã hủy.' } });
       return;
     }
-    if (kept === 0) throw new Error('Không chụp được trang nào.');
+    if (kept === 0) {
+      logToPopup('system', 'Không chụp được trang nào.', 'error', 'Kiểm tra lại khoảng trang "Từ trang / Đến trang" hoặc reload lại trang sách.');
+      throw new Error('Không chụp được trang nào.');
+    }
 
+    logToPopup('pdf', `Đã hoàn thành chụp ${kept} khung hình. Đang tiến hành tạo file PDF bằng pdf-lib...`);
     broadcast({ type: 'SHOT_PROGRESS_TEXT', text: `📄 Đang ghép ${kept} trang đã chụp thành PDF...` });
+    
     const baseTitle = meta.title || tab.title || 'flipbook';
     const finalTitle = options.isTest ? `${baseTitle}_test_20trang` : baseTitle;
     const result = await chrome.runtime.sendMessage({
       type: 'OFFSCREEN_SHOT_BUILD',
       options: { quality: quality / 100, batchSize: 5, title: finalTitle }
     });
-    if (!result || result.error) throw new Error(result?.error || 'Offscreen không phản hồi.');
+    
+    if (!result || result.error) {
+      logToPopup('pdf', `Lỗi tạo file PDF: ${result?.error || 'Offscreen không phản hồi'}`, 'error', 'Bộ nhớ trình duyệt có thể bị đầy do quá nhiều trang chất lượng cao. Hãy giảm "Chất lượng JPG" xuống 80-85% hoặc dùng "Từ trang / Đến trang" để chia nhỏ.');
+      throw new Error(result?.error || 'Offscreen không phản hồi.');
+    }
+
+    logToPopup('pdf', `Tạo file PDF thành công! Gồm ${result.successCount}/${result.totalPages} trang, kích thước ${formatBytes(result.sizeBytes)}.`, 'success');
 
     try {
+      logToPopup('download', `Đang chuyển file "${result.filename}" cho trình tải xuống của Chrome...`);
       result.downloadId = await chrome.downloads.download({
         url: result.blobUrl,
         filename: result.filename,
         saveAs: false
       });
+      logToPopup('download', `Tải file thành công! Mã tải: #${result.downloadId}`, 'success');
     } catch (e) {
       result.downloadError = e.message;
+      logToPopup('download', `Lỗi khi tải file: ${e.message}`, 'error', 'Chrome chặn tải tự động hoặc thư mục tải xuống không có quyền ghi. Kiểm tra cài đặt Tải xuống của Chrome.');
     }
     broadcast({ type: 'SHOT_DONE', result });
   } catch (e) {
+    logToPopup('system', `Tiến trình chụp gặp sự cố: ${e.message}`, 'error', 'Kiểm tra tab flipbook và đảm bảo tab vẫn mở và ở phía trước.');
     broadcast({ type: 'SHOT_DONE', result: { error: e.message } });
   } finally {
     shotRunning = false;
@@ -555,15 +632,23 @@ const messageHandlers = {
   /* Popup yêu cầu quét trang – chuyển tiếp sang content script */
   SCAN_PAGES: async (msg, _sender, sendResponse) => {
     try {
+      logToPopup('tab', 'Bắt đầu quét cấu hình trang và tìm URL ảnh gốc...');
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab) throw new Error('Không tìm thấy tab flipbook.');
       const mainWorldData = await getMainWorldData(tab.id);
       const results = await chrome.tabs.sendMessage(tab.id, {
         type: 'SCAN_PAGES',
         tabId: tab.id,
         mainWorldData
       });
+      if (results?.pages?.length > 0) {
+        logToPopup('tab', `Đã tìm thấy ${results.pages.length} trang ảnh gốc (${results.platform || 'FlipHTML5'}).`, 'success');
+      } else {
+        logToPopup('tab', 'Không tìm thấy URL ảnh gốc trực tiếp từ mã HTML.', 'warn', 'Sách sử dụng canvas động hoặc mã hóa đặc biệt. Hãy sử dụng nút "📸 Chụp màn hình & Tải PDF".');
+      }
       sendResponse(results);
     } catch (e) {
+      logToPopup('tab', `Lỗi quét trang: ${e.message}`, 'error', 'F5 tải lại trang sách và mở lại popup.');
       sendResponse({ error: e.message });
     }
   },
@@ -645,6 +730,7 @@ const messageHandlers = {
   /* Yêu cầu ghép PDF – chuyển sang offscreen */
   BUILD_PDF: async (msg, _sender, sendResponse) => {
     try {
+      logToPopup('pdf', `Đang tải & ghép ${msg.pages?.length || 0} trang ảnh thành PDF...`);
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab?.url) {
@@ -678,22 +764,32 @@ const messageHandlers = {
         options: msg.options
       });
       if (!result) {
+        logToPopup('pdf', 'Offscreen không phản hồi (có thể hết bộ nhớ).', 'error', 'Thử giảm số trang bằng "Từ trang / Đến trang" hoặc giảm chất lượng JPG.');
         sendResponse({ error: 'Offscreen không phản hồi (có thể hết bộ nhớ). Thử giảm số trang bằng "Từ trang/Đến trang".' });
         return;
       }
+      if (result.error) {
+        logToPopup('pdf', `Lỗi tạo PDF: ${result.error}`, 'error');
+      } else {
+        logToPopup('pdf', `Ghép PDF hoàn tất: ${result.successCount}/${result.totalPages} trang (${formatBytes(result.sizeBytes)}).`, 'success');
+      }
       if (!result.error && result.blobUrl) {
         try {
+          logToPopup('download', `Đang gửi file "${result.filename}" sang trình tải xuống...`);
           result.downloadId = await chrome.downloads.download({
             url: result.blobUrl,
             filename: result.filename,
             saveAs: false
           });
+          logToPopup('download', `Tải file thành công (Mã tải: #${result.downloadId})!`, 'success');
         } catch (e) {
           result.downloadError = e.message;
+          logToPopup('download', `Lỗi khi tải file: ${e.message}`, 'error', 'Trình duyệt chặn tải tự động hoặc thư mục tải xuống không có quyền ghi.');
         }
       }
       sendResponse(result);
     } catch (e) {
+      logToPopup('system', `Lỗi hệ thống khi ghép PDF: ${e.message}`, 'error');
       sendResponse({ error: e.message });
     }
   },
@@ -721,14 +817,20 @@ const messageHandlers = {
     }
   },
 
-  /* Lấy trạng thái hiện tại từ content script */
+  /* Xóa nhật ký */
+  CLEAR_LOGS: (_msg, _sender, sendResponse) => {
+    recentLogs.length = 0;
+    sendResponse({ ok: true });
+  },
+
+  /* Lấy trạng thái hiện tại từ content script & lịch sử log */
   GET_STATUS: async (_msg, _sender, sendResponse) => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const result = await chrome.tabs.sendMessage(tab.id, { type: 'GET_STATUS' });
-      sendResponse(result);
+      sendResponse({ ...(result || {}), recentLogs: [...recentLogs] });
     } catch (e) {
-      sendResponse({ status: 'idle', error: e.message });
+      sendResponse({ status: 'idle', recentLogs: [...recentLogs], error: e.message });
     }
   }
 };

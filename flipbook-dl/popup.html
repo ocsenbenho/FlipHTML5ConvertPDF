@@ -87,11 +87,14 @@
     <!-- Log -->
     <section class="log-section">
       <div class="log-header">
-        <span>📋 Nhật ký</span>
-        <button class="btn-clear-log" id="btnClearLog">Xóa</button>
+        <span>📋 Nhật ký hoạt động</span>
+        <div class="log-actions">
+          <button class="btn-log-action" id="btnCopyLog" title="Sao chép toàn bộ nhật ký">📋 Sao chép</button>
+          <button class="btn-clear-log" id="btnClearLog">Xóa</button>
+        </div>
       </div>
       <div class="log-area" id="logArea">
-        <div class="log-entry log-info">Sẵn sàng. Nhấn "Quét trang" để bắt đầu.</div>
+        <div class="log-entry log-info"><span class="log-source log-source-system">[Hệ thống]</span> Sẵn sàng. Nhấn nút bên trên để bắt đầu.</div>
       </div>
     </section>
 

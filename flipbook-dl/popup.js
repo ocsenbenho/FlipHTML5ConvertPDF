@@ -21,6 +21,7 @@
     btnScan: $('#btnScan'),
     btnCancel: $('#btnCancel'),
     logArea: $('#logArea'),
+    btnCopyLog: $('#btnCopyLog'),
     btnClearLog: $('#btnClearLog'),
     flipSpeed: $('#flipSpeed'),
     jpgQuality: $('#jpgQuality'),
@@ -43,13 +44,18 @@
     // Kiểm tra trạng thái hiện tại
     try {
       const status = await sendMessage({ type: 'GET_STATUS' });
-      if (status && status.pages?.length > 0) {
+      if (status?.recentLogs?.length > 0) {
+        el.logArea.innerHTML = '';
+        for (const log of status.recentLogs) {
+          addLog(log.text, log.level || 'info', log.source || '', log.hint || '', log.time);
+        }
+      } else if (status && status.pages?.length > 0) {
         scanResult = status;
         updateInfo(status);
-        addLog(`Đã tìm thấy ${status.pages.length} trang từ phiên trước.`, 'info');
+        addLog(`Đã tìm thấy ${status.pages.length} trang từ phiên trước.`, 'info', 'tab');
       }
     } catch (e) {
-      addLog('Mở trang flipbook rồi chọn phương thức bên dưới.', 'info');
+      addLog('Mở trang flipbook rồi chọn phương thức bên dưới.', 'info', 'system');
     }
 
     // Lắng nghe sự kiện
@@ -57,8 +63,34 @@
     el.btnTest20.addEventListener('click', handleTest20);
     el.btnScan.addEventListener('click', handleScanAndDownload);
     el.btnCancel.addEventListener('click', handleCancel);
+
+    // Sao chép toàn bộ nhật ký
+    if (el.btnCopyLog) {
+      el.btnCopyLog.addEventListener('click', async () => {
+        const text = el.logArea.innerText;
+        if (!text.trim()) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          const oldText = el.btnCopyLog.textContent;
+          el.btnCopyLog.textContent = '✓ Đã chép!';
+          setTimeout(() => { el.btnCopyLog.textContent = oldText; }, 1500);
+        } catch {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          const oldText = el.btnCopyLog.textContent;
+          el.btnCopyLog.textContent = '✓ Đã chép!';
+          setTimeout(() => { el.btnCopyLog.textContent = oldText; }, 1500);
+        }
+      });
+    }
+
     el.btnClearLog.addEventListener('click', () => {
       el.logArea.innerHTML = '';
+      sendMessage({ type: 'CLEAR_LOGS' }).catch(() => {});
     });
 
     // Slider chất lượng
@@ -71,9 +103,11 @@
       input.addEventListener('change', saveSettings);
     });
 
-    // Lắng nghe tiến trình từ background
+    // Lắng nghe tiến trình & log chi tiết từ background
     chrome.runtime.onMessage.addListener((msg) => {
-      if (msg.type === 'FLIP_PROGRESS_UPDATE') {
+      if (msg.type === 'LOG_MESSAGE') {
+        addLog(msg.text, msg.level || 'info', msg.source || '', msg.hint || '', msg.time);
+      } else if (msg.type === 'FLIP_PROGRESS_UPDATE') {
         if (msg.data?.shot) {
           const d = msg.data;
           showProgress(d.label || '📸 Đang chụp...', d.total ? Math.round((d.currentPage / d.total) * 100) : 0);
@@ -83,7 +117,6 @@
         handlePdfProgress(msg.data);
       } else if (msg.type === 'SHOT_PROGRESS_TEXT') {
         showProgress(msg.text, 100);
-        addLog(msg.text, 'info');
       } else if (msg.type === 'SHOT_DONE') {
         handleShotDone(msg.result);
       }
@@ -306,11 +339,45 @@
     el.btnCancel.style.display = 'none';
   }
 
-  function addLog(text, type = 'info') {
+  function addLog(text, type = 'info', source = '', hint = '', time = null) {
     const entry = document.createElement('div');
     entry.className = `log-entry log-${type}`;
-    const time = new Date().toLocaleTimeString('vi-VN', { hour12: false });
-    entry.textContent = `[${time}] ${text}`;
+    
+    const displayTime = time || new Date().toLocaleTimeString('vi-VN', { hour12: false });
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'log-time';
+    timeSpan.textContent = `[${displayTime}] `;
+    entry.appendChild(timeSpan);
+
+    if (source) {
+      const sourceSpan = document.createElement('span');
+      sourceSpan.className = `log-source log-source-${source.toLowerCase()}`;
+      const sourceMap = {
+        tab: '[Tab]',
+        shot: '[Chụp]',
+        offscreen: '[Xử lý ảnh]',
+        pdf: '[Ghép PDF]',
+        download: '[Tải về]',
+        system: '[Hệ thống]',
+        warn: '[Cảnh báo]',
+        error: '[Lỗi]'
+      };
+      sourceSpan.textContent = (sourceMap[source.toLowerCase()] || `[${source}]`) + ' ';
+      entry.appendChild(sourceSpan);
+    }
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'log-text';
+    textSpan.textContent = text;
+    entry.appendChild(textSpan);
+
+    if (hint) {
+      const hintDiv = document.createElement('div');
+      hintDiv.className = 'log-hint';
+      hintDiv.textContent = `💡 Cần xử lý: ${hint}`;
+      entry.appendChild(hintDiv);
+    }
+
     el.logArea.appendChild(entry);
     el.logArea.scrollTop = el.logArea.scrollHeight;
   }
