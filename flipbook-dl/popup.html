@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=420">
+  <title>Flipbook to PDF</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-icon">📖</div>
+      <div class="header-text">
+        <h1>Flipbook to PDF</h1>
+        <p class="subtitle">Tải flipbook thành PDF</p>
+      </div>
+    </header>
+
+    <!-- Thông tin sách -->
+    <section class="info-card" id="infoCard">
+      <div class="info-row">
+        <span class="info-label">📄 Tên sách</span>
+        <span class="info-value" id="bookTitle">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">🌐 Nền tảng</span>
+        <span class="info-value" id="platform">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">📑 Số trang</span>
+        <span class="info-value" id="pageCount">0 / —</span>
+      </div>
+    </section>
+
+    <!-- Progress -->
+    <section class="progress-section" id="progressSection" style="display:none;">
+      <div class="progress-label" id="progressLabel">Đang quét...</div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progressBar" style="width:0%"></div>
+      </div>
+      <div class="progress-detail" id="progressDetail"></div>
+    </section>
+
+    <!-- Nút hành động -->
+    <section class="actions">
+      <button class="btn btn-primary" id="btnScreenshot">
+        <span class="btn-icon">📸</span> Chụp màn hình & Tải PDF (Toàn bộ)
+      </button>
+      <button class="btn btn-outline" id="btnTest20">
+        <span class="btn-icon">🧪</span> Chụp thử 20 trang đầu
+      </button>
+      <button class="btn btn-secondary" id="btnScan">
+        <span class="btn-icon">🔍</span> Quét & Tải PDF từ ảnh gốc
+      </button>
+      <div class="btn-row">
+        <button class="btn btn-sm btn-danger" id="btnCancel" style="display:none;">
+          ✕ Hủy
+        </button>
+      </div>
+    </section>
+
+    <!-- Tùy chọn -->
+    <details class="settings-panel" id="settingsPanel">
+      <summary class="settings-toggle">⚙ Tùy chọn</summary>
+      <div class="settings-body">
+        <div class="setting-row">
+          <label for="flipSpeed">Tốc độ lật (ms)</label>
+          <input type="number" id="flipSpeed" value="800" min="200" max="5000" step="100">
+        </div>
+        <div class="setting-row">
+          <label for="jpgQuality">Chất lượng JPG</label>
+          <input type="range" id="jpgQuality" min="0.5" max="1" step="0.01" value="0.92">
+          <span class="range-value" id="jpgQualityVal">92%</span>
+        </div>
+        <div class="setting-row">
+          <label for="pageFrom">Từ trang</label>
+          <input type="number" id="pageFrom" value="1" min="1">
+        </div>
+        <div class="setting-row">
+          <label for="pageTo">Đến trang</label>
+          <input type="number" id="pageTo" placeholder="Cuối">
+        </div>
+      </div>
+    </details>
+
+    <!-- Log -->
+    <section class="log-section">
+      <div class="log-header">
+        <span>📋 Nhật ký</span>
+        <button class="btn-clear-log" id="btnClearLog">Xóa</button>
+      </div>
+      <div class="log-area" id="logArea">
+        <div class="log-entry log-info">Sẵn sàng. Nhấn "Quét trang" để bắt đầu.</div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>Chỉ dùng cho tài liệu bạn sở hữu hoặc có quyền tải.</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
