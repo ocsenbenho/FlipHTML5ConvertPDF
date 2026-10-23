@@ -222,7 +222,8 @@
     const to = parseInt(el.pageTo.value) || pages.length;
     const filteredPages = pages.slice(from - 1, to);
 
-    addLog(`📄 Bắt đầu tải và ghép PDF: ${filteredPages.length} trang...`, 'info');
+    const rangeInfo = (from > 1 || to < pages.length) ? ` (trang ${from} → ${to})` : '';
+    addLog(`📄 Bắt đầu tải và ghép PDF: ${filteredPages.length} trang${rangeInfo}, chất lượng ${Math.round(options.quality * 100)}%...`, 'info');
     showProgress('📄 Đang tải ảnh & ghép PDF...', 0);
 
     try {

@@ -354,11 +354,12 @@ async function runScreenshotJob(tab, options) {
     }
 
     const totalSteps = pagesToCapture.length;
+    const rangeText = (pageFrom > 1 || endPage < totalPages) ? `, trang ${pageFrom} → ${endPage}` : '';
     broadcast({
       type: 'SHOT_PROGRESS_TEXT',
       text: options.isTest
         ? `🧪 Đang chụp thử 20 trang đầu (${totalSteps} khung hình)...`
-        : `📸 Chuẩn bị chụp ${totalSteps} khung hình (tổng ${totalPages} trang, chế độ ${isDouble ? 'hai trang #p=[n+2]' : 'trang đơn'})...`
+        : `📸 Chuẩn bị chụp ${totalSteps} khung hình (tổng ${totalPages} trang${rangeText}, chất lượng ${quality}%, chế độ ${isDouble ? 'hai trang #p=[n+2]' : 'trang đơn'})...`
     });
 
     let kept = 0;
