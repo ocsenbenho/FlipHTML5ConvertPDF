@@ -18,7 +18,6 @@
     progressDetail: $('#progressDetail'),
     btnScreenshot: $('#btnScreenshot'),
     btnTest20: $('#btnTest20'),
-    btnScan: $('#btnScan'),
     btnCancel: $('#btnCancel'),
     logArea: $('#logArea'),
     btnCopyLog: $('#btnCopyLog'),
@@ -61,7 +60,6 @@
     // Lắng nghe sự kiện
     el.btnScreenshot.addEventListener('click', handleScreenshot);
     el.btnTest20.addEventListener('click', handleTest20);
-    el.btnScan.addEventListener('click', handleScanAndDownload);
     el.btnCancel.addEventListener('click', handleCancel);
 
     // Sao chép toàn bộ nhật ký
@@ -127,7 +125,6 @@
   async function handleTest20() {
     if (isProcessing) return;
     isProcessing = true;
-    el.btnScan.disabled = true;
     el.btnScreenshot.disabled = true;
     el.btnTest20.disabled = true;
     el.btnCancel.style.display = '';
@@ -159,7 +156,6 @@
   async function handleScreenshot() {
     if (isProcessing) return;
     isProcessing = true;
-    el.btnScan.disabled = true;
     el.btnScreenshot.disabled = true;
     el.btnTest20.disabled = true;
     el.btnCancel.style.display = '';
@@ -201,101 +197,6 @@
     resetUI();
   }
 
-  /* ────────────── Quét & Tải PDF từ ảnh gốc ────────────── */
-  async function handleScanAndDownload() {
-    if (isProcessing) return;
-    isProcessing = true;
-
-    el.btnScan.disabled = true;
-    el.btnScreenshot.disabled = true;
-    el.btnTest20.disabled = true;
-    el.btnCancel.style.display = '';
-    el.btnScan.classList.add('scanning');
-    showProgress('🔍 Đang quét cấu hình trang...', 0);
-    addLog('Bắt đầu quét trang...', 'info');
-
-    try {
-      const result = await sendMessage({ type: 'SCAN_PAGES' });
-
-      if (result.error) {
-        addLog(`Lỗi quét: ${result.error}`, 'error');
-        hideProgress();
-        resetUI();
-        return;
-      }
-
-      scanResult = result;
-      updateInfo(result);
-
-      if (result.pages && result.pages.length > 0) {
-        addLog(`✅ Tìm thấy ${result.pages.length} trang (${result.platform}). Tiến hành ghép PDF...`, 'success');
-        await buildPdf(result.pages);
-      } else {
-        addLog(result.message || 'Chưa tìm thấy URL ảnh trực tiếp. Vui lòng sử dụng nút "📸 Chụp màn hình & Tải PDF".', 'warn');
-        hideProgress();
-        resetUI();
-      }
-    } catch (e) {
-      addLog(`Lỗi: ${e.message}`, 'error');
-      hideProgress();
-      resetUI();
-    }
-  }
-
-  /* ────────────── Ghép PDF từ mảng URL ảnh ────────────── */
-  async function buildPdf(pages) {
-    const options = {
-      quality: parseFloat(el.jpgQuality.value) || 0.92,
-      batchSize: 10,
-      title: scanResult?.title || document.title || 'flipbook'
-    };
-
-    // Lọc khoảng trang
-    const from = parseInt(el.pageFrom.value) || 1;
-    const to = parseInt(el.pageTo.value) || pages.length;
-    const filteredPages = pages.slice(from - 1, to);
-
-    const rangeInfo = (from > 1 || to < pages.length) ? ` (trang ${from} → ${to})` : '';
-    addLog(`📄 Bắt đầu tải và ghép PDF: ${filteredPages.length} trang${rangeInfo}, chất lượng ${Math.round(options.quality * 100)}%...`, 'info');
-    showProgress('📄 Đang tải ảnh & ghép PDF...', 0);
-
-    try {
-      const result = await sendMessage({
-        type: 'BUILD_PDF',
-        pages: filteredPages,
-        options
-      });
-
-      if (result.error) {
-        addLog(`Lỗi ghép PDF: ${result.error}`, 'error');
-        resetUI();
-        return;
-      }
-
-      // Tải file PDF
-      addLog(`✅ PDF hoàn tất: ${result.successCount}/${result.totalPages} trang (${formatSize(result.sizeBytes)})`, 'success');
-
-      if (result.errors?.length > 0) {
-        for (const err of result.errors) {
-          addLog(`⚠ Trang ${err.page}: ${err.error}`, 'warn');
-        }
-      }
-
-      showProgress('✅ Hoàn tất!', 100);
-
-      if (result.downloadError) {
-        addLog(`Lỗi tải file: ${result.downloadError}`, 'error');
-      } else {
-        addLog(`📥 Đã tải xuống: ${result.filename}`, 'success');
-      }
-
-    } catch (e) {
-      addLog(`Lỗi: ${e.message}`, 'error');
-    }
-
-    resetUI();
-  }
-
   /* ────────────── Tiến trình ghép PDF ────────────── */
   function handlePdfProgress(data) {
     const pct = data.total ? Math.round((data.current / data.total) * 100) : 0;
@@ -332,8 +233,6 @@
 
   function resetUI() {
     isProcessing = false;
-    el.btnScan.disabled = false;
-    el.btnScan.classList.remove('scanning');
     el.btnScreenshot.disabled = false;
     el.btnTest20.disabled = false;
     el.btnCancel.style.display = 'none';
