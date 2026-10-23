@@ -140,7 +140,7 @@
       isTest: true
     };
 
-    addLog('🧪 Bắt đầu CHỤP THỬ 20 TRANG ĐẦU (#p=1 đến #p=20). Giữ tab flipbook ở phía trước.', 'info');
+    addLog('🧪 Bắt đầu CHỤP THỬ 20 TRANG ĐẦU (cắt đúng kích thước khung sách gốc, loại bỏ viền đen). Giữ tab ở phía trước.', 'info', 'shot');
     showProgress('🧪 Đang chụp thử 20 trang...', 0);
 
     try {
@@ -155,7 +155,7 @@
     }
   }
 
-  /* ────────────── Chụp màn hình → PDF (Toàn bộ) ────────────── */
+  /* ────────────── Chụp khung sách → PDF (Toàn bộ) ────────────── */
   async function handleScreenshot() {
     if (isProcessing) return;
     isProcessing = true;
@@ -172,7 +172,7 @@
       isTest: false
     };
 
-    addLog('📸 Bắt đầu chụp toàn bộ màn hình (tự động điều hướng #p=[n+2] và cắt theo khung sách). Giữ tab flipbook ở phía trước.', 'info');
+    addLog('📸 Bắt đầu chụp theo kích thước khung sách gốc (tự động điều hướng #p=[n+2] và cắt đúng khung sách, không chụp cả màn hình). Giữ tab ở phía trước.', 'info', 'shot');
     showProgress('📸 Đang chụp...', 0);
 
     try {

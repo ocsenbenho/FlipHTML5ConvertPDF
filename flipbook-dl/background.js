@@ -329,7 +329,7 @@ async function runScreenshotJob(tab, options) {
     });
 
   try {
-    logToPopup('system', options.isTest ? '🧪 Bắt đầu tác vụ: CHỤP THỬ 20 TRANG ĐẦU' : '📸 Bắt đầu tác vụ: CHỤP TOÀN BỘ SÁCH VÀ GHÉP PDF');
+    logToPopup('system', options.isTest ? '🧪 Bắt đầu: Chụp thử 20 trang đầu (cắt chuẩn theo khung sách gốc)' : '📸 Bắt đầu: Chụp toàn bộ sách (cắt chuẩn theo khung sách gốc) và ghép PDF');
     logToPopup('offscreen', 'Đang kích hoạt môi trường Offscreen Document để xử lý ảnh & ghép PDF...');
     await ensureOffscreen();
     await chrome.runtime.sendMessage({ type: 'OFFSCREEN_SHOT_RESET' });
@@ -447,7 +447,7 @@ async function runScreenshotJob(tab, options) {
 
       if (stepIndex === 1) {
         if (crop) {
-          logToPopup('shot', `Tự động nhận diện khung sách: ${Math.round(crop.w)}×${Math.round(crop.h)}px tại toạ độ (${crop.x}, ${crop.y}) trên màn hình ${crop.vw}×${crop.vh}px (sẽ cắt viền ngoài).`);
+          logToPopup('shot', `Đã lấy đúng khung nội dung sách: ${Math.round(crop.w)}×${Math.round(crop.h)}px (loại bỏ hoàn toàn thanh công cụ và khoảng đen ngoài sách).`);
           broadcast({
             type: 'SHOT_PROGRESS_TEXT',
             text: `✂ Tự động cắt theo khung sách: ${Math.round(crop.w)}×${Math.round(crop.h)}px (loại bỏ thanh công cụ và khoảng đen)`
@@ -465,7 +465,7 @@ async function runScreenshotJob(tab, options) {
       let dataUrl;
       try {
         dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-        logToPopup('shot', `[Bước ${stepIndex}/${totalSteps}] Đã chụp màn hình trang #${targetPage} (PNG lossless).`);
+        logToPopup('shot', `[Bước ${stepIndex}/${totalSteps}] Đã chụp và cắt đúng khung trang sách #${targetPage} (${Math.round(crop?.w || 0)}×${Math.round(crop?.h || 0)}px).`);
       } catch (capErr) {
         logToPopup('shot', `Lỗi chụp màn hình trang #${targetPage}: ${capErr.message}`, 'error', 'Đảm bảo cửa sổ Chrome không bị thu nhỏ cực tiểu (minimize) và tab đang hiển thị đầy đủ.');
         throw capErr;
