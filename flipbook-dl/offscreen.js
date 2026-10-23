@@ -13,6 +13,111 @@
   const shots = []; // data URL ảnh chụp màn hình (đã cắt)
   let lastShot = null;
 
+  /**
+   * Tự động quét viền và loại bỏ màu nền đồng nhất bao quanh cuốn sách (loại bỏ viền đen, thanh toolbar)
+   */
+  function detectContentBoundingBox(bmp) {
+    const W = bmp.width;
+    const H = bmp.height;
+    if (W < 200 || H < 200) return null;
+
+    const scale = Math.min(1, 500 / Math.max(W, H));
+    const sw = Math.round(W * scale);
+    const sh = Math.round(H * scale);
+
+    const canvas = new OffscreenCanvas(sw, sh);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0, sw, sh);
+
+    const imgData = ctx.getImageData(0, 0, sw, sh);
+    const data = imgData.data;
+
+    function getPixel(x, y) {
+      const idx = (y * sw + x) * 4;
+      return [data[idx], data[idx + 1], data[idx + 2]];
+    }
+
+    const leftBg = getPixel(Math.min(10, Math.floor(sw * 0.02)), Math.floor(sh / 2));
+
+    function colorDiff(c1, c2) {
+      return Math.abs(c1[0] - c2[0]) + Math.abs(c1[1] - c2[1]) + Math.abs(c1[2] - c2[2]);
+    }
+
+    const topMargin = Math.round(40 * (H / 1080) * scale);
+    const botMargin = Math.round(50 * (H / 1080) * scale);
+
+    function isBackground(x, y) {
+      const c = getPixel(x, y);
+      return colorDiff(c, leftBg) < 32;
+    }
+
+    // Quét từ trái sang phải
+    let minX = 0;
+    for (let x = 0; x < sw / 2; x++) {
+      let nonBgCount = 0;
+      for (let y = topMargin; y < sh - botMargin; y += 3) {
+        if (!isBackground(x, y)) nonBgCount++;
+      }
+      if (nonBgCount > (sh - topMargin - botMargin) / 3 * 0.2) {
+        minX = x;
+        break;
+      }
+    }
+
+    // Quét từ phải sang trái
+    let maxX = sw - 1;
+    for (let x = sw - 1; x > sw / 2; x--) {
+      let nonBgCount = 0;
+      for (let y = topMargin; y < sh - botMargin; y += 3) {
+        if (!isBackground(x, y)) nonBgCount++;
+      }
+      if (nonBgCount > (sh - topMargin - botMargin) / 3 * 0.2) {
+        maxX = x;
+        break;
+      }
+    }
+
+    // Quét từ trên xuống dưới
+    let minY = topMargin;
+    for (let y = topMargin; y < sh / 2; y++) {
+      let nonBgCount = 0;
+      for (let x = minX + 5; x < maxX - 5; x += 3) {
+        if (!isBackground(x, y)) nonBgCount++;
+      }
+      if (nonBgCount > (maxX - minX) / 3 * 0.2) {
+        minY = y;
+        break;
+      }
+    }
+
+    // Quét từ dưới lên trên
+    let maxY = sh - botMargin;
+    for (let y = sh - botMargin; y > sh / 2; y--) {
+      let nonBgCount = 0;
+      for (let x = minX + 5; x < maxX - 5; x += 3) {
+        if (!isBackground(x, y)) nonBgCount++;
+      }
+      if (nonBgCount > (maxX - minX) / 3 * 0.2) {
+        maxY = y;
+        break;
+      }
+    }
+
+    const inv = 1 / scale;
+    const realMinX = Math.max(0, Math.round(minX * inv));
+    const realMaxX = Math.min(W, Math.round(maxX * inv));
+    const realMinY = Math.max(0, Math.round(minY * inv));
+    const realMaxY = Math.min(H, Math.round(maxY * inv));
+
+    const realW = realMaxX - realMinX;
+    const realH = realMaxY - realMinY;
+
+    if (realW > 150 && realH > 150 && (realW < W * 0.96 || realH < H * 0.96)) {
+      return { sx: realMinX, sy: realMinY, sw: realW, sh: realH };
+    }
+    return null;
+  }
+
   /** Cắt ảnh chụp theo khung sách (crop tính bằng CSS px) và mã hoá JPEG */
   async function cropShot(dataUrl, crop, quality) {
     const blob = await (await fetch(dataUrl)).blob();
@@ -21,16 +126,32 @@
     let sy = 0;
     let sw = bmp.width;
     let sh = bmp.height;
-    if (crop && crop.vw > 0 && crop.w > 0 && crop.h > 0) {
-      const s = bmp.width / crop.vw; // tỉ lệ pixel ảnh / CSS px (devicePixelRatio)
+
+    const s = (crop && crop.vw > 0) ? (bmp.width / crop.vw) : 1;
+
+    if (crop && crop.w > 0 && crop.h > 0) {
       sx = Math.max(0, Math.round(crop.x * s));
       sy = Math.max(0, Math.round(crop.y * s));
       sw = Math.min(bmp.width - sx, Math.round(crop.w * s));
       sh = Math.min(bmp.height - sy, Math.round(crop.h * s));
-      if (sw < 50 || sh < 50) {
-        sx = 0; sy = 0; sw = bmp.width; sh = bmp.height;
+    }
+
+    // Tự động nhận diện cắt viền nền nếu crop trả về kích thước gần full màn hình (hoặc không có crop)
+    if (sw >= bmp.width * 0.97 && sh >= bmp.height * 0.97) {
+      const autoTrim = detectContentBoundingBox(bmp);
+      if (autoTrim) {
+        sx = autoTrim.sx;
+        sy = autoTrim.sy;
+        sw = autoTrim.sw;
+        sh = autoTrim.sh;
+        console.log('[Flipbook-DL] Đã tự động cắt viền nền ảnh:', { sx, sy, sw, sh, origW: bmp.width, origH: bmp.height });
       }
     }
+
+    if (sw < 50 || sh < 50) {
+      sx = 0; sy = 0; sw = bmp.width; sh = bmp.height;
+    }
+
     const canvas = new OffscreenCanvas(sw, sh);
     const ctx = canvas.getContext('2d');
     ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, sw, sh);
@@ -43,7 +164,7 @@
       fr.onerror = () => reject(fr.error);
       fr.readAsDataURL(out);
     });
-    return { url };
+    return { url, sw, sh, sx, sy };
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

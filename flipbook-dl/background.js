@@ -100,83 +100,177 @@ function findBookRectInPage() {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 
-  // 1. Kiểm tra đối tượng sách nội bộ của FlipHTML5
+  function isValidBookRect(r) {
+    if (!r) return false;
+    const w = r.width || r.w || 0;
+    const h = r.height || r.h || 0;
+    if (w < 120 || h < 120) return false;
+    // Khung cuốn sách không thể bao trọn 100% cả chiều rộng lẫn chiều cao màn hình (vì luôn có thanh công cụ hoặc viền trang trí)
+    if (w >= vw * 0.98 && h >= vh * 0.98) return false;
+    return true;
+  }
+
+  function formatRect(r, source) {
+    const x = Math.max(0, Math.round(r.left !== undefined ? r.left : r.x));
+    const y = Math.max(0, Math.round(r.top !== undefined ? r.top : r.y));
+    const w = Math.min(vw - x, Math.round(r.width !== undefined ? r.width : r.w));
+    const h = Math.min(vh - y, Math.round(r.height !== undefined ? r.height : r.h));
+    return { x, y, w, h, vw, vh, source };
+  }
+
+  // 1. Tọa độ chính xác từ API chính thức của FlipHTML5: window.BookInfo
   try {
-    const bookObj = window.BookInfo?.getBook?.() || window.flipBook || window.singlePageBook;
-    const el = bookObj?.flipBookElement?.[0] || bookObj?.book?.[0] || bookObj?.$book?.[0] || bookObj?.[0];
-    if (el && el.getBoundingClientRect) {
-      const r = el.getBoundingClientRect();
-      if (r.width > 150 && r.height > 150 && r.width <= vw && r.height <= vh) {
-        return {
-          x: Math.max(0, r.left),
-          y: Math.max(0, r.top),
-          w: Math.min(vw - Math.max(0, r.left), r.width),
-          h: Math.min(vh - Math.max(0, r.top), r.height),
-          vw, vh
-        };
-      }
+    if (window.BookInfo && typeof window.BookInfo.left === 'function' && typeof window.BookInfo.top === 'function' &&
+        typeof window.BookInfo.width === 'function' && typeof window.BookInfo.height === 'function') {
+      const rect = {
+        left: window.BookInfo.left(),
+        top: window.BookInfo.top(),
+        width: window.BookInfo.width(),
+        height: window.BookInfo.height()
+      };
+      if (isValidBookRect(rect)) return formatRect(rect, 'BookInfo.api');
     }
   } catch {}
 
-  // 2. Kiểm tra container DOM của FlipHTML5 (#bookContainer)
-  const container = document.querySelector('#bookContainer, .bookContainer');
-  if (container) {
-    const r = container.getBoundingClientRect();
-    if (r.width > 150 && r.height > 150 && r.width <= vw && r.height <= vh) {
-      return {
-        x: Math.max(0, r.left),
-        y: Math.max(0, r.top),
-        w: Math.min(vw - Math.max(0, r.left), r.width),
-        h: Math.min(vh - Math.max(0, r.top), r.height),
-        vw, vh
+  // 2. Kiểm tra container phần tử sách từ BookInfo.container() hoặc BookInfo.getBook()
+  try {
+    const bookObj = window.BookInfo?.getBook?.() || window.flipBook || window.singlePageBook;
+    
+    // Thuộc tính parameters: { width, height, left, top }
+    const params = bookObj?.parameters;
+    if (params && params.width > 120 && params.height > 120) {
+      const pRect = {
+        left: params.left !== undefined ? params.left : (vw - params.width) / 2,
+        top: params.top !== undefined ? params.top : (vh - params.height) / 2,
+        width: params.width,
+        height: params.height
       };
+      if (isValidBookRect(pRect)) return formatRect(pRect, 'bookObj.parameters');
     }
-  }
 
-  // 3. Khung bao quanh tất cả các thẻ canvas hiển thị trang sách (FlipHTML5 render các trang lên canvas)
-  const canvases = Array.from(document.querySelectorAll('canvas')).filter((cv) => {
-    const r = cv.getBoundingClientRect();
-    // Bỏ qua thumbnail progress bar, icon nhỏ hoặc canvas toàn màn hình
-    return r.width > 150 && r.height > 150 &&
-           r.width < vw * 0.98 && r.height < vh * 0.98 &&
-           r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh;
-  });
-  if (canvases.length > 0) {
-    let minX = vw, minY = vh, maxX = 0, maxY = 0;
-    for (const cv of canvases) {
+    // Các biến thể DOM element của bookObj
+    const bookEl = bookObj?.flipBookElement?.[0] || bookObj?.flipBookElement ||
+                   bookObj?.container?.[0] || bookObj?.container ||
+                   bookObj?.stage?.[0] || bookObj?.stage ||
+                   bookObj?.$book?.[0] || bookObj?.book?.[0] ||
+                   bookObj?.$element?.[0] || bookObj?.element?.[0] ||
+                   bookObj?.[0];
+    if (bookEl?.getBoundingClientRect) {
+      const r = bookEl.getBoundingClientRect();
+      if (isValidBookRect(r)) return formatRect(r, 'bookObj.dom');
+    }
+  } catch {}
+
+  // 3. Bao quanh tất cả các thẻ <canvas> hiển thị trang sách đang mở
+  // FlipHTML5 luôn vẽ từng trang sách lên thẻ canvas!
+  try {
+    const canvases = Array.from(document.querySelectorAll('canvas')).filter((cv) => {
+      const cs = getComputedStyle(cv);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) <= 0.05) return false;
       const r = cv.getBoundingClientRect();
-      minX = Math.min(minX, Math.max(0, r.left));
-      minY = Math.min(minY, Math.max(0, r.top));
-      maxX = Math.max(maxX, Math.min(vw, r.right));
-      maxY = Math.max(maxY, Math.min(vh, r.bottom));
-    }
-    if (maxX > minX + 100 && maxY > minY + 100) {
-      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY, vw, vh };
-    }
-  }
+      if (r.width < 120 || r.height < 120) return false; // bỏ qua icon, thanh bar
+      if (r.width >= vw * 0.98 && r.height >= vh * 0.98) return false; // bỏ qua canvas full màn hình
+      if (r.right <= 10 || r.bottom <= 10 || r.left >= vw - 10 || r.top >= vh - 10) return false;
+      return true;
+    });
 
-  // 4. Các nền tảng flipbook khác (AnyFlip, TurnJS, FlowPaper, Heyzine...)
-  const fallbackSelectors = [
-    '#flipbook', '.flipbook', '#book', '.flowpaper_viewer',
-    '.heyzine-container', '.magazine', '.turn-page-wrapper',
-    '.stage-container', '#centerWindow'
-  ];
-  for (const sel of fallbackSelectors) {
-    const el = document.querySelector(sel);
-    if (el) {
-      const r = el.getBoundingClientRect();
-      if (r.width > 200 && r.height > 200 && r.width <= vw && r.height <= vh) {
-        return {
-          x: Math.max(0, r.left),
-          y: Math.max(0, r.top),
-          w: Math.min(vw - Math.max(0, r.left), r.width),
-          h: Math.min(vh - Math.max(0, r.top), r.height),
-          vw, vh
-        };
+    if (canvases.length > 0) {
+      let minX = vw, minY = vh, maxX = 0, maxY = 0;
+      for (const cv of canvases) {
+        const r = cv.getBoundingClientRect();
+        minX = Math.min(minX, Math.max(0, r.left));
+        minY = Math.min(minY, Math.max(0, r.top));
+        maxX = Math.max(maxX, Math.min(vw, r.right));
+        maxY = Math.max(maxY, Math.min(vh, r.bottom));
       }
+      const cRect = { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
+      if (isValidBookRect(cRect)) return formatRect(cRect, `canvases(${canvases.length})`);
     }
+  } catch {}
+
+  // 4. Bao quanh tất cả các thẻ <img> hiển thị trang sách đang mở
+  try {
+    const imgs = Array.from(document.querySelectorAll('#bookContainer img, .bookContainer img, #flipbook img, .magazine img, .turn-page img, .page img')).filter((img) => {
+      const cs = getComputedStyle(img);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) <= 0.05) return false;
+      const r = img.getBoundingClientRect();
+      if (r.width < 120 || r.height < 120) return false;
+      if (r.width >= vw * 0.98 && r.height >= vh * 0.98) return false;
+      if (r.right <= 10 || r.bottom <= 10 || r.left >= vw - 10 || r.top >= vh - 10) return false;
+      return true;
+    });
+
+    if (imgs.length > 0) {
+      let minX = vw, minY = vh, maxX = 0, maxY = 0;
+      for (const img of imgs) {
+        const r = img.getBoundingClientRect();
+        minX = Math.min(minX, Math.max(0, r.left));
+        minY = Math.min(minY, Math.max(0, r.top));
+        maxX = Math.max(maxX, Math.min(vw, r.right));
+        maxY = Math.max(maxY, Math.min(vh, r.bottom));
+      }
+      const iRect = { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
+      if (isValidBookRect(iRect)) return formatRect(iRect, `imgs(${imgs.length})`);
+    }
+  } catch {}
+
+  // 5. Thử các selector phần tử sách thực sự (loại bỏ hoàn toàn #bookContainer vì nó luôn chiếm 100% cửa sổ)
+  const bookSelectors = [
+    '.turn-page-wrapper', '.turn-page', '.magazine', '#book', '#flipbook',
+    '.flowpaper_viewer', '.heyzine-container', '.stage-container', '#centerWindow'
+  ];
+  for (const sel of bookSelectors) {
+    try {
+      const els = Array.from(document.querySelectorAll(sel));
+      for (const el of els) {
+        const r = el.getBoundingClientRect();
+        if (isValidBookRect(r)) return formatRect(r, `selector(${sel})`);
+      }
+    } catch {}
   }
 
+  // 6. Tính toán kích thước hình học chính xác từ bookConfig (pageWidth & pageHeight)
+  try {
+    const bc = window.bookConfig;
+    const pw = parseInt(bc?.largePageWidth || bc?.pageWidth || 0);
+    const ph = parseInt(bc?.largePageHeight || bc?.pageHeight || 0);
+    if (pw > 100 && ph > 100) {
+      let isDouble = true;
+      try {
+        if (typeof window.BookInfo?.isDoublePage === 'function') {
+          isDouble = window.BookInfo.isDoublePage();
+        } else if (bc?.showDoublePage === 'single') {
+          isDouble = false;
+        }
+      } catch {}
+
+      // Kiểm tra xem trang hiện tại có phải là bìa (cover #1) không
+      let isSingleCover = false;
+      try {
+        const cur = window.BookInfo?.getCurrentPages?.();
+        if (cur && (cur.length === 1 || cur.includes(1))) isSingleCover = true;
+      } catch {}
+
+      const totalBookW = (isDouble && !isSingleCover) ? pw * 2 : pw;
+      const totalBookH = ph;
+
+      // Trừ thanh công cụ trên (thường 40px) và dưới (thường 45px)
+      const topBarH = 45;
+      const botBarH = 50;
+      const availW = Math.max(200, vw - 80);
+      const availH = Math.max(200, vh - topBarH - botBarH);
+
+      const scale = Math.min(availW / totalBookW, availH / totalBookH);
+      const w = Math.round(totalBookW * scale);
+      const h = Math.round(totalBookH * scale);
+      const x = Math.round((vw - w) / 2);
+      const y = Math.round(topBarH + (availH - h) / 2);
+
+      return formatRect({ left: x, top: y, width: w, height: h }, 'bookConfig.calc');
+    }
+  } catch {}
+
+  console.warn('[Flipbook-DL] Không phát hiện được khung sách riêng biệt.');
   return null;
 }
 
@@ -465,7 +559,6 @@ async function runScreenshotJob(tab, options) {
       let dataUrl;
       try {
         dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-        logToPopup('shot', `[Bước ${stepIndex}/${totalSteps}] Đã chụp và cắt đúng khung trang sách #${targetPage} (${Math.round(crop?.w || 0)}×${Math.round(crop?.h || 0)}px).`);
       } catch (capErr) {
         logToPopup('shot', `Lỗi chụp màn hình trang #${targetPage}: ${capErr.message}`, 'error', 'Đảm bảo cửa sổ Chrome không bị thu nhỏ cực tiểu (minimize) và tab đang hiển thị đầy đủ.');
         throw capErr;
@@ -483,7 +576,7 @@ async function runScreenshotJob(tab, options) {
         throw new Error(`Lỗi cắt ảnh trang ${targetPage}: ${resp.error}`);
       }
 
-      logToPopup('offscreen', `[Bước ${stepIndex}/${totalSteps}] Đã cắt theo khung sách và mã hóa JPEG chất lượng ${quality}% (khung hình ${resp.count}).`);
+      logToPopup('offscreen', `[Bước ${stepIndex}/${totalSteps}] Đã cắt gọn khung sách: ${resp.sw}×${resp.sh}px (loại bỏ hoàn toàn viền đen và thanh công cụ).`);
 
       kept++;
       const testPrefix = options.isTest ? '🧪 [Thử nghiệm] ' : '';
